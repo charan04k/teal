@@ -10,7 +10,6 @@ import '../../data/models/symbol_model.dart';
 import '../../data/models/tick_model.dart';
 import 'dart:math' as math;
 
-// ─── Chart Screen ────────────────────────────────────────────────
 class ChartScreen extends StatefulWidget {
   final SymbolModel symbol;
   const ChartScreen({super.key, required this.symbol});
@@ -20,11 +19,6 @@ class ChartScreen extends StatefulWidget {
 }
 
 class _ChartScreenState extends State<ChartScreen> {
-  // ValueNotifiers allow targeted widget rebuilds:
-  // - _spotsNotifier  → only the LineChart widget re-renders per tick
-  // - _latestTickNotifier → only the StatsBar / AppBar price re-renders per tick
-  // setState() is now reserved for infrequent structural changes
-  // (loading state, live↔historical toggle, range selection).
   final ValueNotifier<List<FlSpot>> _spotsNotifier = ValueNotifier([]);
   final ValueNotifier<TickModel?> _latestTickNotifier = ValueNotifier(null);
 
@@ -295,9 +289,6 @@ class _ChartScreenState extends State<ChartScreen> {
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _tickSub?.cancel();
     _stopSimulation();
-    // Do NOT unsubscribe here — WatchlistBloc owns the server subscription
-    // for watchlist symbols. Unsubscribing here would stop ticks from
-    // arriving in the watchlist after returning from ChartScreen.
     _transformationController.dispose();
     _spotsNotifier.dispose();
     _latestTickNotifier.dispose();
@@ -580,30 +571,6 @@ class _ChartScreenState extends State<ChartScreen> {
           _rangeChip('1M', () => _loadQuickRange('1M', 30)),
           const Spacer(),
           // Calendar icon button
-          GestureDetector(
-            onTap: _openCalendarPicker,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: _selectedRange == null
-                    ? AppColors.primary
-                    : AppColors.surface,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: _selectedRange == null
-                      ? AppColors.primary
-                      : AppColors.border,
-                ),
-              ),
-              child: Icon(
-                Icons.calendar_month_rounded,
-                size: 18,
-                color: _selectedRange == null
-                    ? Colors.white
-                    : AppColors.textSecondary,
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -1154,38 +1121,6 @@ class _DateRangeSheetState extends State<_DateRangeSheet> {
     );
   }
 
-  Widget _buildGrid(int daysInMonth, int firstWeekday) {
-    final cells = <Widget>[];
-    for (int i = 0; i < firstWeekday; i++) {
-      cells.add(const SizedBox());
-    }
-    for (int d = 1; d <= daysInMonth; d++) {
-      final date = DateTime(_month.year, _month.month, d);
-      final enabled = _isEnabled(date);
-      final start = _isStart(date);
-      final end = _isEnd(date);
-      final mid = _inRange(date);
-      final singleDay = start && _end != null && _isEnd(date);
-
-      cells.add(_DayCell(
-        day: d,
-        enabled: enabled,
-        isStart: start,
-        isEnd: end,
-        isMid: mid,
-        isSingleDay: singleDay,
-        onTap: () => _onTap(date),
-      ));
-    }
-    return GridView.count(
-      crossAxisCount: 7,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 1.05,
-      children: cells,
-    );
-  }
-
   Widget _rangeLabel(String text, {required bool active}) {
     return Column(
       children: [
@@ -1226,86 +1161,6 @@ class _DateRangeSheetState extends State<_DateRangeSheet> {
         child: Icon(icon,
             size: 20,
             color: enabled ? AppColors.textPrimary : AppColors.textMuted),
-      ),
-    );
-  }
-}
-
-// ─── Individual day cell ──────────────────────────────────────────
-
-class _DayCell extends StatelessWidget {
-  final int day;
-  final bool enabled;
-  final bool isStart;
-  final bool isEnd;
-  final bool isMid;
-  final bool isSingleDay;
-  final VoidCallback onTap;
-
-  const _DayCell({
-    required this.day,
-    required this.enabled,
-    required this.isStart,
-    required this.isEnd,
-    required this.isMid,
-    required this.isSingleDay,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          if (!isSingleDay && (isStart || isEnd || isMid))
-            Positioned.fill(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      color: isStart
-                          ? Colors.transparent
-                          : AppColors.primaryLight,
-                    ),
-                  ),
-                  Expanded(
-                    child: Container(
-                      color:
-                      isEnd ? Colors.transparent : AppColors.primaryLight,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (isMid && !isStart && !isEnd)
-            Positioned.fill(
-              child: Container(color: AppColors.primaryLight),
-            ),
-          if (isStart || isEnd)
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          Text(
-            '$day',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight:
-              (isStart || isEnd) ? FontWeight.w700 : FontWeight.w400,
-              color: isStart || isEnd
-                  ? Colors.white
-                  : enabled
-                  ? AppColors.textPrimary
-                  : AppColors.textMuted.withValues(alpha: 0.35),
-            ),
-          ),
-        ],
       ),
     );
   }

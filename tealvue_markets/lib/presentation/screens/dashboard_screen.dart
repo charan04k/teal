@@ -7,11 +7,13 @@ import '../../core/theme/app_theme.dart';
 import '../../data/datasources/remote/api_service.dart';
 import '../../data/datasources/remote/socket_service.dart';
 import '../../data/models/portfolio_model.dart';
+import '../../data/models/symbol_model.dart';
 import '../../data/models/tick_model.dart';
 import '../blocs/portfolio/portfolio_bloc.dart';
 import '../blocs/portfolio/portfolio_state.dart';
 import '../blocs/watchlist/watchlist_bloc.dart';
 import '../blocs/watchlist/watchlist_state.dart';
+import 'chart_screen.dart';
 
 // ── Live data holders ─────────────────────────────────────────────
 
@@ -425,7 +427,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Column(
             children: [
               _holdingHeader(),
-              ...pState.holdings.map((h) => _holdingRow(h)),
+              ...pState.holdings.map(
+                    (h) => GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ChartScreen(
+                          symbol: SymbolModel(
+                            name: h.name, symbol: h.symbol, exchange:"NSE" , type: 'EQUITY', isActive: true,
+                          ),
+                        )
+                      ),
+                    );
+                  },
+                  child: _holdingRow(h),
+                ),
+              ),
             ],
           ),
         ),
