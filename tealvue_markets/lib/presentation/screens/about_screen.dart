@@ -12,13 +12,13 @@ class AboutScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('About')),
       body: Center(
         child: Padding(
-          padding: const EdgeInsets.all(32),
+          padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 100,
-                height: 100,
+                width: 80,
+                height: 80,
                 decoration: BoxDecoration(
                   color: AppColors.primaryLight,
                   borderRadius: BorderRadius.circular(28),
@@ -26,7 +26,7 @@ class AboutScreen extends StatelessWidget {
                 ),
                 child: const Icon(
                   Icons.trending_up,
-                  size: 52,
+                  size: 42,
                   color: AppColors.primary,
                 ),
               ),
@@ -48,7 +48,7 @@ class AboutScreen extends StatelessWidget {
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 32),
+              // const SizedBox(height: 32),
               _infoTile('Version', '1.0.0'),
               _infoTile('Exchange', 'NSE India'),
               _infoTile('Data', 'TealVue Mock API'),
