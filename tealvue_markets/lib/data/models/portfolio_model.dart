@@ -29,6 +29,20 @@ class PortfolioModel {
     };
   }
 
+  /// Creates a new instance with updated fields.
+  /// Used by PortfolioBloc so Equatable detects state change on every tick.
+  PortfolioModel copyWith({
+    double? currentPrice,
+  }) {
+    return PortfolioModel(
+      symbol: symbol,
+      name: name,
+      quantity: quantity,
+      avgBuyPrice: avgBuyPrice,
+      currentPrice: currentPrice ?? this.currentPrice,
+    );
+  }
+
   factory PortfolioModel.fromMap(Map<String, dynamic> map) {
     return PortfolioModel(
       symbol: map['symbol'] ?? '',

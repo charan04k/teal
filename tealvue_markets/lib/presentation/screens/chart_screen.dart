@@ -20,16 +20,24 @@ class ChartScreen extends StatefulWidget {
 }
 
 class _ChartScreenState extends State<ChartScreen> {
-  final List<FlSpot> _spots = [];
+  // ValueNotifiers allow targeted widget rebuilds:
+  // - _spotsNotifier  → only the LineChart widget re-renders per tick
+  // - _latestTickNotifier → only the StatsBar / AppBar price re-renders per tick
+  // setState() is now reserved for infrequent structural changes
+  // (loading state, live↔historical toggle, range selection).
+  final ValueNotifier<List<FlSpot>> _spotsNotifier = ValueNotifier([]);
+  final ValueNotifier<TickModel?> _latestTickNotifier = ValueNotifier(null);
+
   final List<TickModel> _rawTicks = [];
   final Set<int> _seenSequences = {};
-  TickModel? _latestTick;
   bool _isLoading = true;
   bool _isHistorical = false;
   String _statusMessage = 'Loading...';
   int _tickCount = 0;
-  final String startDate = '2026-05-04';
-  final String endDate = '2026-05-18';
+
+  // Convenience getters so the rest of the code stays readable
+  List<FlSpot> get _spots => _spotsNotifier.value;
+  TickModel? get _latestTick => _latestTickNotifier.value;
 
   // Selected quick-range label (null = custom calendar)
   String? _selectedRange; // '1D', '1W', '1M'
@@ -65,13 +73,13 @@ class _ChartScreenState extends State<ChartScreen> {
     if (!mounted) return;
     _stopSimulation();
     _tickSub?.cancel();
+    _spotsNotifier.value = [];
+    _rawTicks.clear();
+    _seenSequences.clear();
+    _tickCount = 0;
     setState(() {
       _isLoading = true;
       _statusMessage = 'Fetching data...';
-      _spots.clear();
-      _rawTicks.clear();
-      _seenSequences.clear();
-      _tickCount = 0;
       _isHistorical = false;
       _selectedRange = null;
     });
@@ -87,15 +95,17 @@ class _ChartScreenState extends State<ChartScreen> {
           .toList();
 
       if (realtimeTicks.isNotEmpty) {
-        setState(() {
-          for (var t in realtimeTicks) {
-            if (_seenSequences.add(t.sequenceNo)) {
-              _spots.add(FlSpot(_tickCount.toDouble(), t.ltp));
-              _rawTicks.add(t);
-              _tickCount++;
-            }
+        final newSpots = <FlSpot>[];
+        for (var t in realtimeTicks) {
+          if (_seenSequences.add(t.sequenceNo)) {
+            newSpots.add(FlSpot(_tickCount.toDouble(), t.ltp));
+            _rawTicks.add(t);
+            _tickCount++;
           }
-          _latestTick = realtimeTicks.last;
+        }
+        _spotsNotifier.value = newSpots;
+        _latestTickNotifier.value = realtimeTicks.last;
+        setState(() {
           _isLoading = false;
           _statusMessage = 'Live · $_tickCount ticks';
         });
@@ -103,36 +113,10 @@ class _ChartScreenState extends State<ChartScreen> {
         return;
       }
 
-      // Historical fallback
-      final historicalData = await _apiService.getHistoricalData(
-        symbol: widget.symbol.symbol,
-        startDate: '2026-05-04',
-        endDate: '2026-05-07',
-        limit: 5000,
-      );
-
-      final historicalTicks = (historicalData['data'] as List)
-          .map((e) => TickModel.fromJson(e))
-          .toList();
-
-      if (historicalTicks.isNotEmpty) {
-        setState(() {
-          for (var i = 0; i < historicalTicks.length; i++) {
-            _spots.add(FlSpot(i.toDouble(), historicalTicks[i].ltp));
-            _rawTicks.add(historicalTicks[i]);
-            _tickCount++;
-          }
-          _latestTick = historicalTicks.last;
-          _isLoading = false;
-          _isHistorical = true;
-          _statusMessage = 'Historical · $_tickCount ticks';
-        });
-        return;
-      }
-
+      // Realtime returned nothing — stay in Live mode, connect socket + simulation
       setState(() {
         _isLoading = false;
-        _statusMessage = 'Waiting for data...';
+        _statusMessage = 'Waiting for live data...';
       });
       _connectSocket();
     } catch (e) {
@@ -153,15 +137,14 @@ class _ChartScreenState extends State<ChartScreen> {
       final tick = TickModel.fromJson(data);
       if (tick.symbol == widget.symbol.symbol &&
           _seenSequences.add(tick.sequenceNo)) {
-        setState(() {
-          _spots.add(FlSpot(_spots.length.toDouble(), tick.ltp));
-          _rawTicks.add(tick);
-          _tickCount++;
-          _latestTick = tick;
-          _isLoading = false;
-          _isHistorical = false;
-          _statusMessage = 'Live · $_tickCount ticks';
-        });
+        // Hot path: update notifiers directly — no setState, no full rebuild.
+        // Only the ValueListenableBuilder wrapping LineChart re-renders.
+        final updated = List<FlSpot>.from(_spotsNotifier.value)
+          ..add(FlSpot(_spotsNotifier.value.length.toDouble(), tick.ltp));
+        _spotsNotifier.value = updated;
+        _latestTickNotifier.value = tick;
+        _rawTicks.add(tick);
+        _tickCount++;
       }
     });
     _socketService.subscribe([widget.symbol.symbol]);
@@ -175,18 +158,49 @@ class _ChartScreenState extends State<ChartScreen> {
 
   void _startSimulation() {
     _stopSimulation();
-    if (_latestTick == null) return;
+    // Seed a price if none exists yet (API returned nothing)
+    if (_latestTickNotifier.value == null) {
+      final hash = widget.symbol.symbol.codeUnits.fold(0, (a, b) => a + b);
+      final seed = 500.0 + (hash % 3000);
+      _latestTickNotifier.value = TickModel(
+        symbol: widget.symbol.symbol, ltp: seed, open: seed,
+        high: seed, low: seed, prevClose: seed, atp: seed,
+        ttq: 0, turnover: 0, timestamp: '', sequenceNo: 0,
+      );
+      final spot = FlSpot(0, seed);
+      _spotsNotifier.value = [spot];
+      _tickCount = 1;
+    }
     _simTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (!mounted) return;
-      final base = _spots.isNotEmpty ? _spots.last.y : _latestTick!.ltp;
+      final currentSpots = _spotsNotifier.value;
+      final base = currentSpots.isNotEmpty
+          ? currentSpots.last.y
+          : _latestTickNotifier.value!.ltp;
       final pct = (0.0005 + _simRng.nextDouble() * 0.0015) *
           (_simRng.nextBool() ? 1 : -1);
       final newPrice = (base * (1 + pct)).clamp(base * 0.97, base * 1.03);
-      setState(() {
-        _spots.add(FlSpot(_spots.length.toDouble(), newPrice));
-        _tickCount++;
-        _statusMessage = 'Live · $_tickCount ticks';
-      });
+      // No setState — notifiers trigger only their respective widgets
+      final updated = List<FlSpot>.from(currentSpots)
+        ..add(FlSpot(currentSpots.length.toDouble(), newPrice));
+      _spotsNotifier.value = updated;
+
+      // Also update _latestTickNotifier so AppBar price + stats bar re-render
+      final prev = _latestTickNotifier.value!;
+      _latestTickNotifier.value = TickModel(
+        symbol: prev.symbol,
+        ltp: newPrice,
+        open: prev.open,
+        high: newPrice > prev.high ? newPrice : prev.high,
+        low: newPrice < prev.low ? newPrice : prev.low,
+        prevClose: prev.prevClose,
+        atp: prev.atp,
+        ttq: prev.ttq,
+        turnover: prev.turnover,
+        timestamp: prev.timestamp,
+        sequenceNo: prev.sequenceNo + 1,
+      );
+      _tickCount++;
     });
   }
 
@@ -200,33 +214,10 @@ class _ChartScreenState extends State<ChartScreen> {
   void _loadQuickRange(String label, int days) {
     _stopSimulation();
     _tickSub?.cancel();
-
     setState(() => _selectedRange = label);
-
-    final fixedStart = DateTime.parse(startDate);
-    final fixedEnd = DateTime.parse(endDate);
-
-    late DateTime rangeStart;
-
-    if (label == '1D') {
-      // Same day
-      rangeStart = fixedEnd;
-    } else if (label == '1W') {
-      // Last 7 days
-      rangeStart = fixedEnd.subtract(const Duration(days: 7));
-    } else if (label == '1M') {
-      // Full available range
-      rangeStart = fixedStart;
-    } else {
-      rangeStart = fixedStart;
-    }
-
-    _loadHistoricalRange(
-      DateTimeRange(
-        start: rangeStart,
-        end: fixedEnd,
-      ),
-    );
+    final end = DateTime.now();
+    final start = end.subtract(Duration(days: days));
+    _loadHistoricalRange(DateTimeRange(start: start, end: end));
   }
 
   Future<void> _loadHistoricalRange(DateTimeRange range) async {
@@ -252,17 +243,18 @@ class _ChartScreenState extends State<ChartScreen> {
           .map((e) => TickModel.fromJson(e))
           .toList();
 
+      _rawTicks.clear();
+      _seenSequences.clear();
+      _tickCount = 0;
+      final newSpots = <FlSpot>[];
+      for (var i = 0; i < ticks.length; i++) {
+        newSpots.add(FlSpot(i.toDouble(), ticks[i].ltp));
+        _rawTicks.add(ticks[i]);
+        _tickCount++;
+      }
+      _spotsNotifier.value = newSpots;
+      if (ticks.isNotEmpty) _latestTickNotifier.value = ticks.last;
       setState(() {
-        _spots.clear();
-        _rawTicks.clear();
-        _seenSequences.clear();
-        _tickCount = 0;
-        for (var i = 0; i < ticks.length; i++) {
-          _spots.add(FlSpot(i.toDouble(), ticks[i].ltp));
-          _rawTicks.add(ticks[i]);
-          _tickCount++;
-        }
-        if (ticks.isNotEmpty) _latestTick = ticks.last;
         _isLoading = false;
         _statusMessage = 'Historical · $_tickCount ticks';
       });
@@ -303,8 +295,12 @@ class _ChartScreenState extends State<ChartScreen> {
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _tickSub?.cancel();
     _stopSimulation();
-    _socketService.unsubscribe([widget.symbol.symbol]);
+    // Do NOT unsubscribe here — WatchlistBloc owns the server subscription
+    // for watchlist symbols. Unsubscribing here would stop ticks from
+    // arriving in the watchlist after returning from ChartScreen.
     _transformationController.dispose();
+    _spotsNotifier.dispose();
+    _latestTickNotifier.dispose();
     super.dispose();
   }
 
@@ -322,7 +318,6 @@ class _ChartScreenState extends State<ChartScreen> {
   }
 
   PreferredSizeWidget _buildAppBar() {
-    final tick = _latestTick;
     return PreferredSize(
       preferredSize: const Size.fromHeight(80),
       child: Container(
@@ -390,40 +385,46 @@ class _ChartScreenState extends State<ChartScreen> {
                   ],
                 ),
                 const Spacer(),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      tick != null ? '₹${tick.ltp.toStringAsFixed(2)}' : '—',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    if (tick != null)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: tick.isPositive
-                              ? AppColors.gainLight
-                              : AppColors.lossLight,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          '${tick.isPositive ? '+' : ''}${tick.change.toStringAsFixed(2)} (${tick.changePercent.toStringAsFixed(2)}%)',
-                          style: TextStyle(
-                            color: tick.isPositive
-                                ? AppColors.gain
-                                : AppColors.loss,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
+                // Wrap only the live-updating price+change in ValueListenableBuilder
+                ValueListenableBuilder<TickModel?>(
+                  valueListenable: _latestTickNotifier,
+                  builder: (context, tick, _) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          tick != null ? '₹${tick.ltp.toStringAsFixed(2)}' : '—',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
                           ),
                         ),
-                      ),
-                  ],
+                        if (tick != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: tick.isPositive
+                                  ? AppColors.gainLight
+                                  : AppColors.lossLight,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '${tick.isPositive ? '+' : ''}${tick.change.toStringAsFixed(2)} (${tick.changePercent.toStringAsFixed(2)}%)',
+                              style: TextStyle(
+                                color: tick.isPositive
+                                    ? AppColors.gain
+                                    : AppColors.loss,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -440,7 +441,7 @@ class _ChartScreenState extends State<ChartScreen> {
         // Historical sub-controls: quick buttons + calendar
         if (_isHistorical) _buildHistoricalControls(),
         Expanded(child: _buildChartArea()),
-        if (!_isLoading && _latestTick != null) _buildStatsBar(),
+        if (!_isLoading) _buildStatsBar(),
       ],
     );
   }
@@ -456,40 +457,45 @@ class _ChartScreenState extends State<ChartScreen> {
           top: 8,
           left: 16,
           child: SafeArea(
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_rounded),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                Text(widget.symbol.symbol,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 18,
-                        color: AppColors.textPrimary)),
-                const SizedBox(width: 8),
-                if (_latestTick != null)
-                  Container(
-                    padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _latestTick!.isPositive
-                          ? AppColors.gainLight
-                          : AppColors.lossLight,
-                      borderRadius: BorderRadius.circular(6),
+            child: ValueListenableBuilder<TickModel?>(
+              valueListenable: _latestTickNotifier,
+              builder: (context, tick, _) {
+                return Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back_ios_rounded),
+                      onPressed: () => Navigator.pop(context),
                     ),
-                    child: Text(
-                      '₹${_latestTick!.ltp.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        color: _latestTick!.isPositive
-                            ? AppColors.gain
-                            : AppColors.loss,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
+                    Text(widget.symbol.symbol,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 18,
+                            color: AppColors.textPrimary)),
+                    const SizedBox(width: 8),
+                    if (tick != null)
+                      Container(
+                        padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: tick.isPositive
+                              ? AppColors.gainLight
+                              : AppColors.lossLight,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '₹${tick.ltp.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            color: tick.isPositive
+                                ? AppColors.gain
+                                : AppColors.loss,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-              ],
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -536,7 +542,7 @@ class _ChartScreenState extends State<ChartScreen> {
                     decoration: BoxDecoration(
                       color: _isLoading
                           ? Colors.orange
-                          : _spots.isNotEmpty
+                          : _spotsNotifier.value.isNotEmpty
                           ? AppColors.gain
                           : AppColors.loss,
                       shape: BoxShape.circle,
@@ -546,7 +552,7 @@ class _ChartScreenState extends State<ChartScreen> {
                   Text(
                     _isLoading
                         ? 'Loading...'
-                        : _spots.isNotEmpty
+                        : _spotsNotifier.value.isNotEmpty
                         ? '$_tickCount ticks'
                         : 'No data',
                     style: const TextStyle(
@@ -667,82 +673,88 @@ class _ChartScreenState extends State<ChartScreen> {
       );
     }
 
-    if (_spots.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.show_chart, size: 48, color: AppColors.textMuted),
-            const SizedBox(height: 16),
-            Text(_statusMessage,
-                style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 14),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadData,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text('Retry', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Stack(
-      children: [
-        InteractiveViewer(
-          transformationController: _transformationController,
-          boundaryMargin: const EdgeInsets.all(20),
-          minScale: 0.5,
-          maxScale: 5.0,
-          child: _buildLineChart(),
-        ),
-        // Live pulse indicator (live mode only)
-        if (!_isHistorical)
-          Positioned(
-            top: 12,
-            right: 12,
-            child: Row(
+    // ValueListenableBuilder ensures only this subtree re-renders per tick.
+    // The AppBar, TabBar, and StatsBar are outside this builder and stay still.
+    return ValueListenableBuilder<List<FlSpot>>(
+      valueListenable: _spotsNotifier,
+      builder: (context, spots, _) {
+        if (spots.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: const BoxDecoration(
-                    color: AppColors.gain,
-                    shape: BoxShape.circle,
+                const Icon(Icons.show_chart, size: 48, color: AppColors.textMuted),
+                const SizedBox(height: 16),
+                Text(_statusMessage,
+                    style: const TextStyle(
+                        color: AppColors.textSecondary, fontSize: 14),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: _loadData,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
+                  child: const Text('Retry', style: TextStyle(color: Colors.white)),
                 ),
-                const SizedBox(width: 4),
-                const Text('LIVE',
-                    style: TextStyle(
-                        fontSize: 9,
-                        color: AppColors.gain,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5)),
               ],
             ),
-          ),
-      ],
+          );
+        }
+
+        return Stack(
+          children: [
+            InteractiveViewer(
+              transformationController: _transformationController,
+              boundaryMargin: const EdgeInsets.all(20),
+              minScale: 0.5,
+              maxScale: 5.0,
+              child: _buildLineChart(spots),
+            ),
+            if (!_isHistorical)
+              Positioned(
+                top: 12,
+                right: 12,
+                child: Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: AppColors.gain,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Text('LIVE',
+                        style: TextStyle(
+                            fontSize: 9,
+                            color: AppColors.gain,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5)),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
-  Widget _buildLineChart() {
-    final prices = _spots.map((s) => s.y).toList();
+  Widget _buildLineChart(List<FlSpot> spots) {
+    final prices = spots.map((s) => s.y).toList();
     final minY = prices.reduce((a, b) => a < b ? a : b);
     final maxY = prices.reduce((a, b) => a > b ? a : b);
     final range = maxY - minY;
     final padding = range == 0 ? 10.0 : range * 0.1;
 
     final bool isPositive;
-    if (_isHistorical && _spots.length >= 2) {
-      isPositive = _spots.last.y >= _spots.first.y;
+    if (_isHistorical && spots.length >= 2) {
+      isPositive = spots.last.y >= spots.first.y;
     } else {
-      isPositive = _latestTick?.isPositive ?? true;
+      isPositive = _latestTickNotifier.value?.isPositive ?? true;
     }
     final lineColor = isPositive ? AppColors.gain : AppColors.loss;
     final fillColor = isPositive ? AppColors.gainLight : AppColors.lossLight;
@@ -754,7 +766,7 @@ class _ChartScreenState extends State<ChartScreen> {
           minY: minY - padding,
           maxY: maxY + padding,
           minX: 0,
-          maxX: (_spots.length - 1).toDouble(),
+          maxX: (spots.length - 1).toDouble(),
           clipData: const FlClipData.all(),
           gridData: FlGridData(
             show: true,
@@ -790,7 +802,7 @@ class _ChartScreenState extends State<ChartScreen> {
           ),
           lineBarsData: [
             LineChartBarData(
-              spots: List.from(_spots),
+              spots: List.from(spots),
               isCurved: true,
               curveSmoothness: 0.2,
               color: lineColor,
@@ -826,23 +838,28 @@ class _ChartScreenState extends State<ChartScreen> {
   }
 
   Widget _buildStatsBar() {
-    final tick = _latestTick!;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.border)),
-        color: AppColors.surface,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _statItem('Open', tick.open),
-          _statItem('High', tick.high),
-          _statItem('Low', tick.low),
-          _statItem('VWAP', tick.atp),
-          _statItem('Prev', tick.prevClose),
-        ],
-      ),
+    return ValueListenableBuilder<TickModel?>(
+      valueListenable: _latestTickNotifier,
+      builder: (context, tick, _) {
+        if (tick == null) return const SizedBox();
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: AppColors.border)),
+            color: AppColors.surface,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _statItem('Open', tick.open),
+              _statItem('High', tick.high),
+              _statItem('Low', tick.low),
+              _statItem('VWAP', tick.atp),
+              _statItem('Prev', tick.prevClose),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1126,10 +1143,10 @@ class _DateRangeSheetState extends State<_DateRangeSheet> {
           ),
 
           // Calendar grid
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-            child: _buildGrid(daysInMonth, firstWeekday),
-          ),
+          // Padding(
+          //   padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+          //   child: _buildGrid(daysInMonth, firstWeekday),
+          // ),
 
           SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
         ],

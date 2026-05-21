@@ -17,31 +17,20 @@ import '../../domain/repositories/portfolio_repository.dart';
 final sl = GetIt.instance;
 
 Future<void> initDependencies() async {
-  // Dio with SSL bypass for mock server
 
   sl.registerLazySingleton<Dio>(() {
+    final dio = Dio(BaseOptions(
+      baseUrl: AppConstants.baseUrl,
+      connectTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(seconds: 30),
+      headers: {'Content-Type': 'application/json'},
+    ));
 
-    final dio = Dio(
-      BaseOptions(
-        baseUrl: AppConstants.baseUrl,
-        connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 30),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      ),
-    );
-
-    // ONLY for mobile/desktop
-    if (!kIsWeb) {
-      (dio.httpClientAdapter as IOHttpClientAdapter)
-          .createHttpClient = () {
-
+    if (!kIsWeb && dio.httpClientAdapter is IOHttpClientAdapter) {
+      (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient = () {
         final client = HttpClient();
-
         client.badCertificateCallback =
             (X509Certificate cert, String host, int port) => true;
-
         return client;
       };
     }
@@ -49,14 +38,20 @@ Future<void> initDependencies() async {
     return dio;
   });
 
+  // Services
   sl.registerLazySingleton<ApiService>(() => ApiService(sl()));
   sl.registerLazySingleton<SocketService>(() => SocketService());
   sl.registerLazySingleton<HiveService>(() => HiveService());
 
+  // Init Hive
   await sl<HiveService>().init();
 
+  // Repositories
   sl.registerLazySingleton<SymbolRepository>(
         () => SymbolRepositoryImpl(sl()),
+  );
+  sl.registerLazySingleton<MarketRepository>(
+        () => MarketRepositoryImpl(sl()),
   );
   sl.registerLazySingleton<PortfolioRepository>(
         () => PortfolioRepositoryImpl(sl()),

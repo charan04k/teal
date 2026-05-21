@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../data/datasources/local/hive_service.dart';
 import '../../../data/datasources/remote/api_service.dart';
@@ -18,6 +19,12 @@ class WatchlistBloc extends Bloc<WatchlistEvent, WatchlistState> {
   final Map<String, TickModel> _ticks = {};
   final Set<int> _seenSequences = {};
   List<SymbolModel> _watchlistSymbols = [];
+
+  // Simulation — fires when real socket ticks don't arrive within 3 s
+  Timer? _simTimer;
+  bool _realTickReceived = false;
+  final _simRng = math.Random();
+  int _simSeq = 1000000; // high base so sim seqs don't clash with real ones
 
   // Stream subscriptions — stored so they can be cancelled in close().
   StreamSubscription<Map<String, dynamic>>? _tickSub;
@@ -82,8 +89,10 @@ class WatchlistBloc extends Bloc<WatchlistEvent, WatchlistState> {
         }
       } catch (_) {}
     }
+    // After all REST prices loaded, wait 3s for real socket ticks.
+    // If none arrive, start simulation — same fallback as ChartScreen.
+    _scheduleSimulationFallback();
   }
-
   void _setupSocket() {
     // Cancel any existing subscriptions before creating new ones.
     _tickSub?.cancel();
@@ -188,6 +197,7 @@ class WatchlistBloc extends Bloc<WatchlistEvent, WatchlistState> {
       TickReceived event,
       Emitter<WatchlistState> emit,
       ) {
+    _realTickReceived = true;
     _ticks[event.tick.symbol] = event.tick;
     if (state is WatchlistLoaded) {
       emit((state as WatchlistLoaded).copyWith(
@@ -196,8 +206,55 @@ class WatchlistBloc extends Bloc<WatchlistEvent, WatchlistState> {
     }
   }
 
+  // ── Simulation ──────────────────────────────────────────────────
+  // Mirrors ChartScreen._startSimulation — kicks in when the real socket
+  // is silent (market closed / server unreachable).
+
+  void _scheduleSimulationFallback() {
+    Future.delayed(const Duration(seconds: 3), () {
+      if (isClosed || _realTickReceived) return;
+      _startSimulation();
+    });
+  }
+
+  void _startSimulation() {
+    _simTimer?.cancel();
+    if (_ticks.isEmpty) return;
+    _simTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (isClosed) return;
+      for (final symbol in _watchlistSymbols) {
+        final prev = _ticks[symbol.symbol];
+        if (prev == null) continue;
+        final pct = (0.0005 + _simRng.nextDouble() * 0.0015) *
+            (_simRng.nextBool() ? 1 : -1);
+        final newLtp = (prev.ltp * (1 + pct)).clamp(prev.ltp * 0.97, prev.ltp * 1.03);
+        final simTick = TickModel(
+          symbol: prev.symbol,
+          ltp: newLtp,
+          open: prev.open,
+          high: newLtp > prev.high ? newLtp : prev.high,
+          low: newLtp < prev.low ? newLtp : prev.low,
+          prevClose: prev.prevClose,
+          atp: prev.atp,
+          ttq: prev.ttq,
+          turnover: prev.turnover,
+          timestamp: prev.timestamp,
+          sequenceNo: _simSeq++,
+        );
+        _ticks[symbol.symbol] = simTick;
+        add(TickReceived(simTick));
+      }
+    });
+  }
+
+  void _stopSimulation() {
+    _simTimer?.cancel();
+    _simTimer = null;
+  }
+
   @override
   Future<void> close() {
+    _stopSimulation();
     _tickSub?.cancel();
     _connectedSub?.cancel();
     _disconnectedSub?.cancel();

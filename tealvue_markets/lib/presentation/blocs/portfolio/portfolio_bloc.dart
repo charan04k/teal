@@ -15,6 +15,7 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
 
   List<PortfolioModel> _holdings = [];
   StreamSubscription<Map<String, dynamic>>? _tickSub;
+  int _version = 0;
 
   PortfolioBloc({
     required PortfolioRepository repository,
@@ -34,21 +35,19 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
 
   void _onLoad(LoadPortfolio event, Emitter<PortfolioState> emit) {
     _holdings = _repository.getPortfolio();
-    // Seed currentPrice = avgBuyPrice so the very first emit has
-    // totalCurrent = totalInvested and totalPnl = 0 (not -100%).
-    // Socket/REST will overwrite this with real market prices shortly.
-    for (var h in _holdings) {
-      if (h.currentPrice == 0) h.currentPrice = h.avgBuyPrice;
-    }
-    emit(PortfolioLoaded(List.from(_holdings)));
+    // Seed currentPrice = avgBuyPrice so the very first render shows
+    // correct invested value. Socket/REST will overwrite with real prices.
+    _holdings = _holdings
+        .map((h) => h.currentPrice == 0
+        ? h.copyWith(currentPrice: h.avgBuyPrice)
+        : h)
+        .toList();
+    emit(PortfolioLoaded(List.from(_holdings), version: ++_version));
     _setupSocket();
     _fetchRestPrices();
   }
 
-  // ── Socket setup ────────────────────────────────────────────────
-  // Portfolio subscribes to its own symbols on the shared broadcast socket.
-  // This is independent of the watchlist — portfolio stocks get live tick
-  // updates even when they are NOT on the watchlist.
+  // ── Socket ──────────────────────────────────────────────────────
 
   void _setupSocket() {
     _tickSub?.cancel();
@@ -69,9 +68,6 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
   }
 
   // ── REST price seed ─────────────────────────────────────────────
-  // On cold start the socket may not have sent ticks yet.
-  // Fetch one tick per holding from REST to populate current prices
-  // immediately so the dashboard doesn't show dashes on first load.
 
   Future<void> _fetchRestPrices() async {
     for (final holding in List<PortfolioModel>.from(_holdings)) {
@@ -93,16 +89,13 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
   Future<void> _onAdd(AddHolding event, Emitter<PortfolioState> emit) async {
     await _repository.addHolding(event.holding);
     _holdings = _repository.getPortfolio();
-    // Seed currentPrice = avgBuyPrice for the new holding immediately
-    for (var h in _holdings) {
-      if (h.symbol == event.holding.symbol && h.currentPrice == 0) {
-        h.currentPrice = event.holding.avgBuyPrice;
-      }
-    }
-    emit(PortfolioLoaded(List.from(_holdings)));
-    // Subscribe the new symbol to the socket immediately
+    _holdings = _holdings
+        .map((h) => h.symbol == event.holding.symbol && h.currentPrice == 0
+        ? h.copyWith(currentPrice: event.holding.avgBuyPrice)
+        : h)
+        .toList();
+    emit(PortfolioLoaded(List.from(_holdings), version: ++_version));
     _socketService.subscribe([event.holding.symbol]);
-    // Also seed price from REST right away
     try {
       final data = await _apiService.getRealtimeCurrent(
         symbol: event.holding.symbol,
@@ -121,26 +114,31 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
       RemoveHolding event, Emitter<PortfolioState> emit) async {
     await _repository.removeHolding(event.symbol);
     _holdings.removeWhere((h) => h.symbol == event.symbol);
-    // Only unsubscribe if symbol is not in any remaining holding
     if (!_holdings.any((h) => h.symbol == event.symbol)) {
       _socketService.unsubscribe([event.symbol]);
     }
-    emit(PortfolioLoaded(List.from(_holdings)));
+    emit(PortfolioLoaded(List.from(_holdings), version: ++_version));
   }
 
-  // ── Price update (from socket or REST) ──────────────────────────
+  // ── Price update (socket or REST) ───────────────────────────────
+  //
+  // Uses copyWith so each updated holding is a NEW object instance.
+  // Combined with the version counter, Equatable always detects the
+  // state as changed and BlocBuilder rebuilds on every tick.
 
   void _onUpdatePrices(
       UpdatePortfolioPrices event, Emitter<PortfolioState> emit) {
     bool updated = false;
-    for (var holding in _holdings) {
-      if (holding.symbol == event.tick.symbol) {
-        holding.currentPrice = event.tick.ltp;
+    _holdings = _holdings.map((h) {
+      if (h.symbol == event.tick.symbol && event.tick.ltp > 0) {
         updated = true;
+        return h.copyWith(currentPrice: event.tick.ltp);
       }
-    }
+      return h;
+    }).toList();
+
     if (updated) {
-      emit(PortfolioLoaded(List.from(_holdings)));
+      emit(PortfolioLoaded(List.from(_holdings), version: ++_version));
     }
   }
 
