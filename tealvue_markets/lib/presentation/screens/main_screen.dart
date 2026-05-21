@@ -32,6 +32,7 @@ class _MainScreenState extends State<MainScreen> {
     WatchlistScreen(),
     PortfolioScreen(),
     DashboardScreen(),
+    AboutScreen()
   ];
 
   final List<String> _titles = [
