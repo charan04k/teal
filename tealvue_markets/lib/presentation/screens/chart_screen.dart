@@ -28,6 +28,8 @@ class _ChartScreenState extends State<ChartScreen> {
   bool _isHistorical = false;
   String _statusMessage = 'Loading...';
   int _tickCount = 0;
+  final String startDate = '2026-05-04';
+  final String endDate = '2026-05-18';
 
   // Selected quick-range label (null = custom calendar)
   String? _selectedRange; // '1D', '1W', '1M'
@@ -198,10 +200,33 @@ class _ChartScreenState extends State<ChartScreen> {
   void _loadQuickRange(String label, int days) {
     _stopSimulation();
     _tickSub?.cancel();
+
     setState(() => _selectedRange = label);
-    final end = DateTime.now();
-    final start = end.subtract(Duration(days: days));
-    _loadHistoricalRange(DateTimeRange(start: start, end: end));
+
+    final fixedStart = DateTime.parse(startDate);
+    final fixedEnd = DateTime.parse(endDate);
+
+    late DateTime rangeStart;
+
+    if (label == '1D') {
+      // Same day
+      rangeStart = fixedEnd;
+    } else if (label == '1W') {
+      // Last 7 days
+      rangeStart = fixedEnd.subtract(const Duration(days: 7));
+    } else if (label == '1M') {
+      // Full available range
+      rangeStart = fixedStart;
+    } else {
+      rangeStart = fixedStart;
+    }
+
+    _loadHistoricalRange(
+      DateTimeRange(
+        start: rangeStart,
+        end: fixedEnd,
+      ),
+    );
   }
 
   Future<void> _loadHistoricalRange(DateTimeRange range) async {
