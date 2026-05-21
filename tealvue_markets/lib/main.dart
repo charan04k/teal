@@ -41,7 +41,7 @@ class CrestApp extends StatelessWidget {
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      // home: const MainScreen(),
+      home: const MainScreen(),
     );
   }
 }

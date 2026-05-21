@@ -2,18 +2,6 @@ import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import '../../../core/constants/app_constants.dart';
 
-/// A broadcast StreamController replaces the old single function-pointer
-/// pattern (onTickReceived / onConnected / onDisconnected).
-///
-/// Problem with the old design:
-///   _socketService.onTickReceived = myCallback;   // OVERWRITES previous owner
-///
-/// When ChartScreen opened it stomped the WatchlistBloc's callback, so the
-/// watchlist froze at the last price it saw before the chart was pushed.
-/// Going back didn't restore the watchlist callback either.
-///
-/// Fix: use broadcast streams.  Any number of listeners can subscribe
-/// simultaneously and each receives every event independently.
 class SocketService {
   IO.Socket? _socket;
   bool _isConnected = false;
@@ -28,17 +16,12 @@ class SocketService {
   final _connectedController = StreamController<void>.broadcast();
   final _disconnectedController = StreamController<void>.broadcast();
 
-  /// Every tick payload arrives here.  Multiple listeners (WatchlistBloc,
-  /// ChartScreen, future alert service…) all receive the same event.
   Stream<Map<String, dynamic>> get tickStream => _tickController.stream;
 
-  /// Fires once when the socket successfully connects (or reconnects).
   Stream<void> get connectedStream => _connectedController.stream;
 
-  /// Fires once when the socket drops.
   Stream<void> get disconnectedStream => _disconnectedController.stream;
 
-  // ── Connection ─────────────────────────────────────────────────
   void connect() {
     if (_socket != null) {
       _socket!.disconnect();
@@ -92,10 +75,6 @@ class SocketService {
     _socket!.connect();
   }
 
-  // ── Subscription management ────────────────────────────────────
-
-  /// Add symbols to the active set and emit to the server.
-  /// Idempotent — safe to call multiple times for the same symbol.
   void subscribe(List<String> symbols) {
     _activeSymbols.addAll(symbols);
     if (_isConnected && _socket != null) {
@@ -103,9 +82,6 @@ class SocketService {
     }
   }
 
-  /// Remove symbols from the active set and notify the server.
-  /// Only unsubscribes at the socket level when no other subscriber
-  /// still wants that symbol (tracked via _activeSymbols set).
   void unsubscribe(List<String> symbols) {
     _activeSymbols.removeAll(symbols);
     if (_isConnected && _socket != null) {
@@ -120,8 +96,6 @@ class SocketService {
     _socket?.dispose();
     _socket = null;
   }
-
-  /// Call once when the app is fully torn down (rarely needed in practice).
   void dispose() {
     disconnect();
     _tickController.close();
