@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/portfolio_model.dart';
+import '../../data/models/symbol_model.dart';
 import '../blocs/portfolio/portfolio_bloc.dart';
 import '../blocs/portfolio/portfolio_state.dart';
 import '../blocs/watchlist/watchlist_bloc.dart';
 import '../blocs/watchlist/watchlist_state.dart';
+import 'chart_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -134,7 +136,23 @@ class DashboardScreen extends StatelessWidget {
                 children: [
                   _holdingHeader(),
                   ...state.holdings.map(
-                        (h) => _holdingRow(h),
+                        (h) => GestureDetector(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ChartScreen(
+                              symbol: SymbolModel(
+                                symbol: h.symbol,
+                                name: h.symbol,
+                                exchange: 'NSE', type: 'EQUITY', isActive: true,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                      child: _holdingRow(h),
+                    ),
                   ),
                 ],
               ),
