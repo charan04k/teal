@@ -205,13 +205,79 @@ class _ChartScreenState extends State<ChartScreen> {
 
   // ── Historical mode ───────────────────────────────────────────
 
-  void _loadQuickRange(String label, int days) {
+  void _loadQuickRange(String label) {
     _stopSimulation();
-    _tickSub?.cancel();
-    setState(() => _selectedRange = label);
-    final end = DateTime.now();
-    final start = end.subtract(Duration(days: days));
-    _loadHistoricalRange(DateTimeRange(start: start, end: end));
+
+    setState(() {
+      _selectedRange = label;
+      _isLoading = true;
+      _isHistorical = true;
+      _statusMessage = 'Loading historical...';
+    });
+
+    String startDate;
+    String endDate = '2026-05-18';
+
+    if (label == '1D') {
+      startDate = '2026-05-04';
+      endDate = '2026-05-04';
+    } else if (label == '1W') {
+      startDate = '2026-05-04';
+      endDate = '2026-05-11';
+    } else if (label == '1M') {
+      startDate = '2026-05-04';
+      endDate = '2026-05-18';
+    } else {
+      return;
+    }
+
+    _loadHistoricalRangeByString(startDate, endDate);
+  }
+  Future<void> _loadHistoricalRangeByString(
+      String startDate,
+      String endDate,
+      ) async {
+    if (!mounted) return;
+
+    try {
+      final data = await _apiService.getHistoricalData(
+        symbol: widget.symbol.symbol,
+        startDate: startDate,
+        endDate: endDate,
+        limit: 5000,
+      );
+
+      final ticks = (data['data'] as List)
+          .map((e) => TickModel.fromJson(e))
+          .toList();
+
+      _rawTicks.clear();
+      _seenSequences.clear();
+      _tickCount = 0;
+
+      final newSpots = <FlSpot>[];
+
+      for (var i = 0; i < ticks.length; i++) {
+        newSpots.add(FlSpot(i.toDouble(), ticks[i].ltp));
+        _rawTicks.add(ticks[i]);
+        _tickCount++;
+      }
+
+      _spotsNotifier.value = newSpots;
+      if (ticks.isNotEmpty) {
+        _latestTickNotifier.value = ticks.last;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _statusMessage = 'Historical · $_tickCount ticks';
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _statusMessage = 'Error loading data';
+      });
+    }
   }
 
   Future<void> _loadHistoricalRange(DateTimeRange range) async {
@@ -260,27 +326,7 @@ class _ChartScreenState extends State<ChartScreen> {
     }
   }
 
-  Future<void> _openCalendarPicker() async {
-    _stopSimulation();
-    _tickSub?.cancel();
-    final range = await showModalBottomSheet<DateTimeRange>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _DateRangeSheet(
-        firstDate: DateTime(2024, 1, 1),
-        lastDate: DateTime.now(),
-        initialRange: DateTimeRange(
-          start: DateTime.now().subtract(const Duration(days: 7)),
-          end: DateTime.now(),
-        ),
-      ),
-    );
-    if (range != null) {
-      setState(() => _selectedRange = null);
-      _loadHistoricalRange(range);
-    }
-  }
+
 
   // ── Zoom reset ────────────────────────────────────────────────
 
@@ -511,7 +557,7 @@ class _ChartScreenState extends State<ChartScreen> {
                 _isHistorical = true;
                 _selectedRange = '1D';
               });
-              _loadQuickRange('1D', 1);
+              _loadQuickRange('1D');
             }
           }),
           const Spacer(),
@@ -564,11 +610,11 @@ class _ChartScreenState extends State<ChartScreen> {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: Row(
         children: [
-          _rangeChip('1D', () => _loadQuickRange('1D', 1)),
+          _rangeChip('1D', () => _loadQuickRange('1D')),
           const SizedBox(width: 8),
-          _rangeChip('1W', () => _loadQuickRange('1W', 7)),
+          _rangeChip('1W', () => _loadQuickRange('1W')),
           const SizedBox(width: 8),
-          _rangeChip('1M', () => _loadQuickRange('1M', 30)),
+          _rangeChip('1M', () => _loadQuickRange('1M')),
           const Spacer(),
           // Calendar icon button
         ],
