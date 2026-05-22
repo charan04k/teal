@@ -38,15 +38,12 @@ Future<void> initDependencies() async {
     return dio;
   });
 
-  // Services
   sl.registerLazySingleton<ApiService>(() => ApiService(sl()));
   sl.registerLazySingleton<SocketService>(() => SocketService());
   sl.registerLazySingleton<HiveService>(() => HiveService());
 
-  // Init Hive
   await sl<HiveService>().init();
 
-  // Repositories
   sl.registerLazySingleton<SymbolRepository>(
         () => SymbolRepositoryImpl(sl()),
   );

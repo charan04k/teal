@@ -31,12 +31,9 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
     on<UpdatePortfolioPrices>(_onUpdatePrices);
   }
 
-  // ── Load ────────────────────────────────────────────────────────
 
   void _onLoad(LoadPortfolio event, Emitter<PortfolioState> emit) {
     _holdings = _repository.getPortfolio();
-    // Seed currentPrice = avgBuyPrice so the very first render shows
-    // correct invested value. Socket/REST will overwrite with real prices.
     _holdings = _holdings
         .map((h) => h.currentPrice == 0
         ? h.copyWith(currentPrice: h.avgBuyPrice)
@@ -47,7 +44,7 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
     _fetchRestPrices();
   }
 
-  // ── Socket ──────────────────────────────────────────────────────
+
 
   void _setupSocket() {
     _tickSub?.cancel();
@@ -67,7 +64,6 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
     }
   }
 
-  // ── REST price seed ─────────────────────────────────────────────
 
   Future<void> _fetchRestPrices() async {
     for (final holding in List<PortfolioModel>.from(_holdings)) {
@@ -84,7 +80,6 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
     }
   }
 
-  // ── Add ─────────────────────────────────────────────────────────
 
   Future<void> _onAdd(AddHolding event, Emitter<PortfolioState> emit) async {
     await _repository.addHolding(event.holding);
@@ -108,7 +103,7 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
     } catch (_) {}
   }
 
-  // ── Remove ──────────────────────────────────────────────────────
+
 
   Future<void> _onRemove(
       RemoveHolding event, Emitter<PortfolioState> emit) async {
@@ -120,11 +115,6 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
     emit(PortfolioLoaded(List.from(_holdings), version: ++_version));
   }
 
-  // ── Price update (socket or REST) ───────────────────────────────
-  //
-  // Uses copyWith so each updated holding is a NEW object instance.
-  // Combined with the version counter, Equatable always detects the
-  // state as changed and BlocBuilder rebuilds on every tick.
 
   void _onUpdatePrices(
       UpdatePortfolioPrices event, Emitter<PortfolioState> emit) {
@@ -142,7 +132,7 @@ class PortfolioBloc extends Bloc<PortfolioEvent, PortfolioState> {
     }
   }
 
-  // ── Cleanup ──────────────────────────────────────────────────────
+
 
   @override
   Future<void> close() {

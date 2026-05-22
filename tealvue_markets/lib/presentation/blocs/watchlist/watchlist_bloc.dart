@@ -26,7 +26,6 @@ class WatchlistBloc extends Bloc<WatchlistEvent, WatchlistState> {
   final _simRng = math.Random();
   int _simSeq = 1000000; // high base so sim seqs don't clash with real ones
 
-  // Stream subscriptions — stored so they can be cancelled in close().
   StreamSubscription<Map<String, dynamic>>? _tickSub;
   StreamSubscription<void>? _connectedSub;
   StreamSubscription<void>? _disconnectedSub;
@@ -89,8 +88,7 @@ class WatchlistBloc extends Bloc<WatchlistEvent, WatchlistState> {
         }
       } catch (_) {}
     }
-    // After all REST prices loaded, wait 3s for real socket ticks.
-    // If none arrive, start simulation — same fallback as ChartScreen.
+
     _scheduleSimulationFallback();
   }
   void _setupSocket() {
@@ -99,8 +97,6 @@ class WatchlistBloc extends Bloc<WatchlistEvent, WatchlistState> {
     _connectedSub?.cancel();
     _disconnectedSub?.cancel();
 
-    // Subscribe to the broadcast streams.  Because they are broadcast,
-    // ChartScreen can also listen simultaneously without evicting us.
     _tickSub = _socketService.tickStream.listen((data) {
       final tick = TickModel.fromJson(data);
       if (_seenSequences.add(tick.sequenceNo)) {
@@ -206,9 +202,6 @@ class WatchlistBloc extends Bloc<WatchlistEvent, WatchlistState> {
     }
   }
 
-  // ── Simulation ──────────────────────────────────────────────────
-  // Mirrors ChartScreen._startSimulation — kicks in when the real socket
-  // is silent (market closed / server unreachable).
 
   void _scheduleSimulationFallback() {
     Future.delayed(const Duration(seconds: 3), () {
