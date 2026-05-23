@@ -29,9 +29,6 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
   late SocketService _socketService;
   late ApiService _apiService;
   StreamSubscription<Map<String, dynamic>>? _tickSub;
-  Timer? _simTimer;
-  final _simRng = math.Random();
-  int _simSeq = 2000000;
   List<SymbolModel> _symbols = [];
   bool _liveStarted = false;
 
@@ -45,8 +42,6 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Runs every time this widget gets new dependencies — including first build.
-    // Safe to read context here.
     if (!_liveStarted) {
       final state = context.read<WatchlistBloc>().state;
       if (state is WatchlistLoaded && state.symbols.isNotEmpty) {
@@ -64,15 +59,12 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
     for (final s in symbols) {
       _tickNotifiers.putIfAbsent(s.symbol, () => ValueNotifier(null));
     }
-
-    // Seed immediately from existing bloc ticks
     existingTicks.forEach((symbol, tick) {
       if (tick.ltp > 0 && _tickNotifiers.containsKey(symbol)) {
         _tickNotifiers[symbol]!.value = tick;
       }
     });
 
-    // Start socket listener
     _tickSub = _socketService.tickStream.listen((data) {
       if (!mounted) return;
       final tick = TickModel.fromJson(data);
@@ -80,8 +72,6 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
       if (notifier == null || tick.ltp <= 0) return;
       notifier.value = tick;
     });
-
-    // Fetch REST prices for each symbol
     _fetchPrices();
   }
 
@@ -101,55 +91,6 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
 
     // After REST, start simulation for any notifiers still null
     if (!mounted) return;
-    _startSimulation();
-  }
-
-  void _startSimulation() {
-    _simTimer?.cancel();
-    // For symbols with no price yet, give them a seed price
-    for (final s in _symbols) {
-      final notifier = _tickNotifiers[s.symbol];
-      if (notifier != null && notifier.value == null) {
-        // Use symbol hash as seed so same symbol always starts at same price
-        final hash = s.symbol.codeUnits.fold(0, (a, b) => a + b);
-        final seed = 500.0 + (hash % 3000);
-        notifier.value = TickModel(
-          symbol: s.symbol, ltp: seed, open: seed,
-          high: seed, low: seed, prevClose: seed,
-          atp: seed, ttq: 0, turnover: 0,
-          timestamp: '', sequenceNo: _simSeq++,
-        );
-      }
-    }
-
-    _simTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (!mounted) return;
-      for (final symbol in _symbols) {
-        final notifier = _tickNotifiers[symbol.symbol];
-        if (notifier == null) continue;
-        final prev = notifier.value;
-        if (prev == null) continue;
-        final pct = (0.0005 + _simRng.nextDouble() * 0.0015) *
-            (_simRng.nextBool() ? 1 : -1);
-        final newLtp = (prev.ltp * (1 + pct))
-            .clamp(prev.ltp * 0.97, prev.ltp * 1.03);
-        notifier.value = TickModel(
-          symbol: prev.symbol, ltp: newLtp,
-          open: prev.open,
-          high: newLtp > prev.high ? newLtp : prev.high,
-          low: newLtp < prev.low ? newLtp : prev.low,
-          prevClose: prev.prevClose, atp: prev.atp,
-          ttq: prev.ttq, turnover: prev.turnover,
-          timestamp: prev.timestamp, sequenceNo: _simSeq++,
-        );
-      }
-    });
-  }
-
-  void _stopLive() {
-    _tickSub?.cancel();
-    _simTimer?.cancel();
-    _simTimer = null;
   }
 
   ValueNotifier<TickModel?> _notifierFor(String symbol) =>
@@ -319,7 +260,9 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
       ]),
     );
   }
-
+  void _stopLive() {
+    _tickSub?.cancel();
+  }
   @override
   void dispose() {
     _stopLive();
