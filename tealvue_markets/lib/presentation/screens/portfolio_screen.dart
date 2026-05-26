@@ -685,22 +685,58 @@ class _AddHoldingSheetState extends State<AddHoldingSheet> {
 
   void _submit() {
     if (_selectedSymbol == null) return;
+
     if (_qty <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid quantity')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid quantity')),
+      );
       return;
     }
+
     if (_marketLtp == null || _marketLtp! <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Market price not available yet, please wait')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Market price not available yet, please wait'),
+        ),
+      );
       return;
     }
-    context.read<PortfolioBloc>().add(
-      AddHolding(PortfolioModel(
-        symbol: _selectedSymbol!.symbol,
-        name: _selectedSymbol!.name,
-        quantity: _qty,
-        avgBuyPrice: _marketLtp!,
-      )),
+
+    final portfolioBloc = context.read<PortfolioBloc>();
+
+    final currentState = portfolioBloc.state;
+
+    PortfolioModel newHolding = PortfolioModel(
+      symbol: _selectedSymbol!.symbol,
+      name: _selectedSymbol!.name,
+      quantity: _qty,
+      avgBuyPrice: _marketLtp!,
     );
+
+    if (currentState is PortfolioLoaded) {
+      try {
+        final existing = currentState.holdings.firstWhere(
+              (h) => h.symbol == _selectedSymbol!.symbol,
+        );
+        final totalQty = existing.quantity + _qty;
+        final totalInvestment =
+            (existing.quantity * existing.avgBuyPrice) +
+                (_qty * _marketLtp!);
+
+        final avgPrice = totalInvestment / totalQty;
+
+        newHolding = existing.copyWith(
+          quantity: totalQty,
+          avgBuyPrice: avgPrice,
+        );
+
+        portfolioBloc.add(RemoveHolding(existing.symbol));
+      } catch (_) {
+      }
+    }
+
+    portfolioBloc.add(AddHolding(newHolding));
+
     Navigator.pop(context);
   }
 

@@ -17,8 +17,8 @@ class AboutScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 100,
-                height: 100,
+                width: 50,
+                height: 50,
                 decoration: BoxDecoration(
                   color: AppColors.primaryLight,
                   borderRadius: BorderRadius.circular(28),
@@ -26,7 +26,7 @@ class AboutScreen extends StatelessWidget {
                 ),
                 child: const Icon(
                   Icons.trending_up,
-                  size: 52,
+                  size: 32,
                   color: AppColors.primary,
                 ),
               ),

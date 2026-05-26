@@ -31,14 +31,19 @@ class PortfolioModel {
 
   /// Creates a new instance with updated fields.
   /// Used by PortfolioBloc so Equatable detects state change on every tick.
+  /// Used by PortfolioBloc so Equatable detects state change on every tick.
   PortfolioModel copyWith({
     double? currentPrice,
+    double? quantity,
+    double? avgBuyPrice,
+    String? symbol,
+    String? name,
   }) {
     return PortfolioModel(
-      symbol: symbol,
-      name: name,
-      quantity: quantity,
-      avgBuyPrice: avgBuyPrice,
+      symbol: symbol ?? this.symbol,
+      name: name ?? this.name,
+      quantity: quantity ?? this.quantity,
+      avgBuyPrice: avgBuyPrice ?? this.avgBuyPrice,
       currentPrice: currentPrice ?? this.currentPrice,
     );
   }
